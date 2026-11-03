@@ -1,0 +1,12 @@
+build/
+*.ihx
+*.bin
+*.rel
+*.lst
+*.rst
+*.sym
+*.map
+*.lk
+*.asm
+*.cdb
+*.adb

@@ -1,0 +1,22 @@
+{
+    "configurations": [
+        {
+            "name": "SDCC-STM8",
+            "includePath": [
+                "${workspaceFolder}/src",
+                "C:/Program Files/SDCC/include/stm8",
+                "C:/Program Files/SDCC/include"
+            ],
+            "defines": [
+                "__SDCC",
+                "__SDCC_stm8",
+                "__interrupt(x)=",
+                "__critical=",
+                "__asm__(x)="
+            ],
+            "cStandard": "c11",
+            "intelliSenseMode": "gcc-x86"
+        }
+    ],
+    "version": 4
+}
