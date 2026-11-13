@@ -23,18 +23,23 @@ Programming connector: SWIM, GND, NRST, VDD. The Samtec TSM-104 header library f
 
 ## Light programs
 
-Each button press advances to the next program. A press is accepted on the falling edge and then
-ignored for one second, which debounces the switch and prevents double steps.
+The board powers up in program 1. Each button press switches to the next program straight away.
+After the last program the next press puts the tree to sleep (mode 0), and the press after that
+wakes it into program 1 again. After a press is accepted, further presses are ignored for 250 ms,
+which debounces the switch.
 
 | Mode | Star | Branches |
 |------|------|----------|
 | 0 | Off | Off. Core in Halt, about 1 uA, wakes on button |
-| 1 | Twinkles white | Steady green with a slow breathe |
-| 2 | Twinkles white | Crossfades green and red |
-| 3 | White, blue and ice blue | White, blue and ice blue |
+| 1 | Twinkles white | Twinkles green |
+| 2 | Red, green, blue, 1 s each | Same, in step with the star |
+| 3 | Twinkles white | Crossfades green and red |
 | 4 | Rainbow drift, leads | Rainbow drift, follows |
 | 5 | Gold twinkle | Candle-flame flicker |
 | 6 | Steady gold | Fast red, green, blue party |
+
+Every program change starts from the same state: both PWM timers stopped with counters, flags and
+frame phase cleared, the 10 ms tick restarted, and both LED groups faded up from dark.
 
 Programs are defined as pairs of pattern descriptors in the `MODES` table at the top of `src/main.c`.
 A pattern is a palette plus brightness, fade-speed and hold ranges, so new programs are a one-line addition.
@@ -80,6 +85,11 @@ libs/               Samtec TSM-104 connector schematic symbol, footprint and STE
 | OpenOCD 0.12 | SWIM programmer via ST-Link | `winget install xpack-dev-tools.openocd-xpack` |
 | Zadig | Binds the WinUSB driver to the ST-Link | `winget install akeo.ie.Zadig` |
 
+SDCC 4.5.0 miscompiles `rnd8() % p->ncolors` in `group_pick()`: the random value is overwritten before
+the divide, so the result is always 0. An earlier retry loop built on that expression hung the firmware.
+`group_pick()` now does all random choices through `rnd_range()`, whose generated code is correct, and has
+no retry loop. Check the `.rst` listing if you add new `%` expressions on 8-bit values.
+
 SDCC 4.5.0 for Windows ships its preprocessor helper as `bin\cc1` without an `.exe` extension, which makes
 every compile fail with `cannot execute 'cc1'`. Copy `C:\Program Files\SDCC\bin\cc1` to `cc1.exe` in the same
 folder and make sure `C:\Program Files\SDCC\bin` is on `PATH`.
@@ -92,7 +102,7 @@ mingw32-make bin      # build/main.bin, raw 64 KB address-space image with code 
 mingw32-make clean
 ```
 
-The current build uses about 1.8 KB of flash and 65 bytes of static RAM.
+The current build uses about 1.9 KB of flash and 65 bytes of static RAM; the stack peaks at about 30 bytes.
 
 ## Flash over SWIM
 
@@ -108,7 +118,10 @@ The ST-Link built into STM32 Nucleo boards only supports SWD and will not work.
 mingw32-make flash
 ```
 
-This calls OpenOCD with `openocd/stm8l101f3.cfg` and programs, verifies and resets the part.
+This calls OpenOCD with `openocd/stm8l101f3.cfg`, connects with NRST held low (a plain SWIM connect fails
+while the LED firmware runs), then writes, verifies and starts the firmware. OpenOCD's `program` command does
+not work for STM8 because there is no STM8 flash-bank driver; the Makefile uses `load_image` and
+`verify_image` instead.
 If you have `stm8flash` on your `PATH`, `mingw32-make flash-stm8flash` does the same job with that tool.
 
 ## Tuning notes

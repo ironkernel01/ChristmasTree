@@ -20,18 +20,23 @@ group_t star, branches;
 volatile uint8_t star_duty_r, star_duty_g, star_duty_b;
 volatile uint8_t br_duty_r, br_duty_g, br_duty_b;
 
+/* PWM phase counters, file scope so leds_stop() can put them back to a known state */
+static uint8_t star_phase, br_phase;
+
 /* ------------------------------------------------------------------ PWM ISRs */
 
 /* Star: PB3/PB4/PB5. Logic 0 = LED on. */
 void tim2_isr(void) __interrupt(IRQ_TIM2_UPD)
 {
-    static uint8_t t;
     static uint8_t dr, dg, db;
+    uint8_t t;
 
     TIM2_SR1 &= (uint8_t)~TIM_SR1_UIF;
 
-    if (++t >= PWM_STEPS)
+    t = star_phase + 1;
+    if (t >= PWM_STEPS)
         t = 0;
+    star_phase = t;
 
     if (t == 0) {                       /* start of frame: latch and switch on */
         dr = star_duty_r;
@@ -50,13 +55,15 @@ void tim2_isr(void) __interrupt(IRQ_TIM2_UPD)
 /* Branches: PB0/PB1/PB2. */
 void tim3_isr(void) __interrupt(IRQ_TIM3_UPD)
 {
-    static uint8_t t;
     static uint8_t dr, dg, db;
+    uint8_t t;
 
     TIM3_SR1 &= (uint8_t)~TIM_SR1_UIF;
 
-    if (++t >= PWM_STEPS)
+    t = br_phase + 1;
+    if (t >= PWM_STEPS)
         t = 0;
+    br_phase = t;
 
     if (t == 0) {
         dr = br_duty_r;
@@ -106,18 +113,31 @@ void leds_init(void)
 void leds_start(void)
 {
     CLK_PCKENR |= CLK_PCKEN_TIM2 | CLK_PCKEN_TIM3;
-    TIM2_CR1 |= TIM_CR1_CEN;
-    TIM3_CR1 |= TIM_CR1_CEN;
+    TIM2_EGR = TIM_EGR_UG;              /* counters to 0, prescaler/ARR reloaded */
+    TIM3_EGR = TIM_EGR_UG;
+    TIM2_SR1 = 0;                       /* drop the UIF that UG just set */
+    TIM3_SR1 = 0;
+    TIM2_CR1 = TIM_CR1_CEN;
+    TIM3_CR1 = TIM_CR1_CEN;
 }
 
+/* Stop both PWM engines and return them to a known state: timers halted with
+ * counters and flags cleared, frame phase at the start, duties 0, all LEDs off. */
 void leds_stop(void)
 {
-    TIM2_CR1 &= (uint8_t)~TIM_CR1_CEN;
-    TIM3_CR1 &= (uint8_t)~TIM_CR1_CEN;
-    CLK_PCKENR &= (uint8_t)~(CLK_PCKEN_TIM2 | CLK_PCKEN_TIM3);
+    CLK_PCKENR |= CLK_PCKEN_TIM2 | CLK_PCKEN_TIM3;   /* registers need the clock */
+    TIM2_CR1 = 0;
+    TIM3_CR1 = 0;
+    TIM2_CNTRH = 0; TIM2_CNTRL = 0;
+    TIM3_CNTRH = 0; TIM3_CNTRL = 0;
+    TIM2_SR1 = 0;
+    TIM3_SR1 = 0;
+    star_phase = PWM_STEPS - 1;         /* next interrupt starts a new frame */
+    br_phase   = PWM_STEPS - 1;
     star_duty_r = star_duty_g = star_duty_b = 0;
     br_duty_r = br_duty_g = br_duty_b = 0;
     PB_ODR |= LED_MASK;                 /* logic 1 = off */
+    CLK_PCKENR &= (uint8_t)~(CLK_PCKEN_TIM2 | CLK_PCKEN_TIM3);
 }
 
 /* ------------------------------------------------------------------ animator */
@@ -150,11 +170,18 @@ static void group_pick(group_t *g)
         if (p->flags & PAT_SEQUENTIAL) {
             if (++g->idx >= p->ncolors)
                 g->idx = 0;
+        } else if (g->idx >= p->ncolors) {
+            g->idx = rnd_range(0, (uint8_t)(p->ncolors - 1));     /* first pick: any colour */
         } else {
-            uint8_t n;
-            do {
-                n = rnd8() % p->ncolors;
-            } while (n == g->idx);      /* always change colour */
+            /*
+             * Any colour except the current one, in a single bounded pick. Do not
+             * write this as "do { n = rnd8() % ncolors; } while (n == idx);": SDCC
+             * 4.5.0 miscompiles that modulo (it divides ncolors by itself, so n is
+             * always 0) and the loop never exits once idx is 0.
+             */
+            uint8_t n = rnd_range(0, (uint8_t)(p->ncolors - 2));
+            if (n >= g->idx)
+                n++;
             g->idx = n;
         }
     } else {
@@ -172,10 +199,19 @@ static void group_pick(group_t *g)
     g->hold = rnd_range(p->hold_min, p->hold_max);
 }
 
+/* Start a pattern from a known state: all channels dark, no hold, fresh colour pick. */
 void group_set_pattern(group_t *g, const pattern_t *p)
 {
-    g->pat = p;
-    g->idx = 0xFF;
+    uint8_t i;
+
+    for (i = 0; i < 3; i++) {
+        g->cur[i]  = 0;
+        g->tgt[i]  = 0;
+        g->step[i] = 0;
+    }
+    g->hold = 0;
+    g->pat  = p;
+    g->idx  = 0xFF;
     group_pick(g);
 }
 
@@ -207,6 +243,9 @@ void group_tick(group_t *g)
 static uint8_t gamma_duty(uint16_t lvl88)
 {
     uint16_t l = lvl88 >> 8;
+    /* l*l + 1023 overflows 16 bits for l >= 254 (SDCC int is 16-bit); both map to full on */
+    if (l >= 254)
+        return PWM_STEPS;
     return (uint8_t)(((l * l) + 1023u) >> 10);
 }
 

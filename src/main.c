@@ -17,13 +17,12 @@
 #include "leds.h"
 
 #define BUTTON_PIN      (1 << 2)
-#define DEBOUNCE_TICKS  100         /* 100 x 10 ms = 1 s */
+#define DEBOUNCE_TICKS  25          /* 25 x 10 ms = 250 ms lockout after a press */
 
 /* -------------------------------------------------------------- colours */
 static const uint8_t PAL_WHITE[]      = { 255, 255, 255 };
 static const uint8_t PAL_GREEN[]      = {   0, 255,   0 };
 static const uint8_t PAL_GREEN_RED[]  = {   0, 255,   0,  255,   0,   0 };
-static const uint8_t PAL_WHITE_BLUE[] = { 255, 255, 255,    0,   0, 255,  100, 140, 255 };
 static const uint8_t PAL_RAINBOW[]    = { 255,   0,   0,  255, 160,   0,    0, 255,   0,
                                             0, 255, 255,    0,   0, 255,  255,   0, 255 };
 static const uint8_t PAL_CANDLE[]     = { 255,  70,   0,  255, 130,   0,  255,  30,   0 };
@@ -33,28 +32,29 @@ static const uint8_t PAL_RGB[]        = { 255,   0,   0,    0, 255,   0,    0,  
 /* -------------------------------------------------------------- patterns */
 /*                       palette, n, bri lo/hi, speed lo/hi, hold lo/hi, flags */
 static const pattern_t P_STAR_WHITE    = { PAL_WHITE,      1,  60, 255,  6, 40,   0,  20, 0 };
-static const pattern_t P_BR_GREEN      = { PAL_GREEN,      1, 170, 255,  1,  3,  50, 200, 0 };
+static const pattern_t P_BR_GREEN_TW   = { PAL_GREEN,      1,  40, 255,  4, 32,   0,  25, 0 };
 static const pattern_t P_BR_GREEN_RED  = { PAL_GREEN_RED,  2, 120, 255,  2, 10,  20, 120, 0 };
-static const pattern_t P_WHITE_BLUE    = { PAL_WHITE_BLUE, 3,  90, 255,  3, 24,  10,  80, 0 };
 static const pattern_t P_STAR_RAINBOW  = { PAL_RAINBOW,    6, 220, 255,  3,  3,   0,  10, PAT_SEQUENTIAL };
 static const pattern_t P_BR_RAINBOW    = { PAL_RAINBOW,    6, 220, 255,  1,  1,  20,  20, PAT_SEQUENTIAL };
 static const pattern_t P_STAR_GOLD     = { PAL_GOLD,       1, 150, 255,  2,  8,   0,  30, 0 };
 static const pattern_t P_BR_CANDLE     = { PAL_CANDLE,     3,  60, 255, 16, 63,   0,   6, 0 };
 static const pattern_t P_STAR_GOLD_STD = { PAL_GOLD,       1, 255, 255,  4,  4, 255, 255, 0 };
 static const pattern_t P_BR_PARTY      = { PAL_RGB,        3, 200, 255, 40, 63,  10,  40, 0 };
+static const pattern_t P_RGB_ROTATE    = { PAL_RGB,        3, 255, 255, 63, 63, 100, 100, PAT_SEQUENTIAL };
 
 typedef struct { const pattern_t *star, *branches; } mode_t;
 
 /* Mode 0 is sleep; the table below holds modes 1..N */
 static const mode_t MODES[] = {
-    { &P_STAR_WHITE,    &P_BR_GREEN     },  /* 1: star twinkles white, branches green          */
-    { &P_STAR_WHITE,    &P_BR_GREEN_RED },  /* 2: star white, branches twinkle green/red       */
-    { &P_WHITE_BLUE,    &P_WHITE_BLUE   },  /* 3: star and branches white/blue                 */
+    { &P_STAR_WHITE,    &P_BR_GREEN_TW  },  /* 1: star twinkles white, branches twinkle green  */
+    { &P_RGB_ROTATE,    &P_RGB_ROTATE   },  /* 2: everything steps red, green, blue, 1 s each  */
+    { &P_STAR_WHITE,    &P_BR_GREEN_RED },  /* 3: star white, branches twinkle green/red       */
     { &P_STAR_RAINBOW,  &P_BR_RAINBOW   },  /* 4: slow rainbow drift, star leads               */
     { &P_STAR_GOLD,     &P_BR_CANDLE    },  /* 5: gold star, candle-flame branches             */
     { &P_STAR_GOLD_STD, &P_BR_PARTY     },  /* 6: steady gold star, fast red/green/blue party  */
 };
 #define NUM_MODES   (1 + (uint8_t)(sizeof(MODES) / sizeof(MODES[0])))
+#define BOOT_MODE   1                       /* power up twinkling white star over green branches */
 
 /* -------------------------------------------------------------- shared state */
 static volatile uint8_t tick_flag;      /* set every 10 ms by TIM4 */
@@ -118,6 +118,7 @@ static void tick_init(void)
 {
     CLK_PCKENR |= CLK_PCKEN_TIM4;
     TIM4_CR1  = 0;
+    TIM4_CNTR = 0;
     TIM4_PSCR = 10;                     /* 16 MHz / 1024 = 15.625 kHz */
     TIM4_ARR  = (uint8_t)155;           /* /156 = 100.16 Hz */
     TIM4_EGR  = TIM_EGR_UG;
@@ -126,16 +127,29 @@ static void tick_init(void)
     TIM4_CR1  = TIM_CR1_CEN;
 }
 
+/*
+ * Every program change starts from the same known state: interrupts masked, both PWM
+ * timers stopped with counters, flags and frame phase cleared, LEDs off, the 10 ms tick
+ * restarted from zero, any stale tick or EXTI flag dropped, and both animator groups
+ * reset to dark before the new pattern is loaded. The interrupt mask is restored after.
+ */
 static void apply_mode(uint8_t m)
 {
-    if (m == 0) {
-        leds_stop();
-        return;
+    disable_irq();
+
+    leds_stop();
+    tick_init();
+    tick_flag = 0;
+    EXTI_SR1  = BUTTON_PIN;
+
+    if (m != 0) {
+        group_set_pattern(&star,     MODES[m - 1].star);
+        group_set_pattern(&branches, MODES[m - 1].branches);
+        leds_push_duties();
+        leds_start();
     }
-    group_set_pattern(&star,     MODES[m - 1].star);
-    group_set_pattern(&branches, MODES[m - 1].branches);
-    leds_push_duties();
-    leds_start();
+
+    enable_irq();
 }
 
 /* -------------------------------------------------------------- sleep */
@@ -167,7 +181,7 @@ void main(void)
     leds_init();
     tick_init();
 
-    mode = 0;
+    mode = BOOT_MODE;
     apply_mode(mode);
     enable_irq();
 

@@ -30,7 +30,7 @@ $(BUILD)/$(TARGET).bin: $(BUILD)/$(TARGET).ihx
 	$(MAKEBIN) -s 65536 -p $< $@
 
 flash: $(BUILD)/$(TARGET).ihx
-	$(OPENOCD) -f openocd/stm8l101f3.cfg -c "program $< verify reset exit"
+	$(OPENOCD) -f openocd/stm8l101f3.cfg -c "init; reset halt; load_image $<; verify_image $<; reset run; shutdown"
 
 flash-stm8flash: $(BUILD)/$(TARGET).ihx
 	stm8flash -c stlinkv2 -p stm8l101f3 -w $<
