@@ -22,7 +22,7 @@ typedef struct {
     const uint8_t *palette;     /* RGB triples, 0..255 */
     uint8_t ncolors;
     uint8_t bri_min, bri_max;   /* brightness scale 0..255 applied to the palette colour */
-    uint8_t spd_min, spd_max;   /* fade speed 1..63; cur moves spd/8 levels per 10 ms tick */
+    uint8_t spd_min, spd_max;   /* fade speed 1..255; cur moves spd/8 levels per 10 ms tick */
     uint8_t hold_min, hold_max; /* ticks (10 ms) to hold at the target before a new pick */
     uint8_t flags;
 } pattern_t;

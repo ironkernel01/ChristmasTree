@@ -40,21 +40,22 @@ static const pattern_t P_STAR_GOLD     = { PAL_GOLD,       1, 150, 255,  2,  8, 
 static const pattern_t P_BR_CANDLE     = { PAL_CANDLE,     3,  60, 255, 16, 63,   0,   6, 0 };
 static const pattern_t P_STAR_GOLD_STD = { PAL_GOLD,       1, 255, 255,  4,  4, 255, 255, 0 };
 static const pattern_t P_BR_PARTY      = { PAL_RGB,        3, 200, 255, 40, 63,  10,  40, 0 };
-static const pattern_t P_RGB_ROTATE    = { PAL_RGB,        3, 255, 255, 63, 63, 100, 100, PAT_SEQUENTIAL };
+/* 255 -> about 80 ms switch, then 91-tick hold: 100 ticks = 1.00 s per colour */
+static const pattern_t P_RGB_ROTATE    = { PAL_RGB,        3, 255, 255,255,255,  91,  91, PAT_SEQUENTIAL };
 
 typedef struct { const pattern_t *star, *branches; } mode_t;
 
 /* Mode 0 is sleep; the table below holds modes 1..N */
 static const mode_t MODES[] = {
-    { &P_STAR_WHITE,    &P_BR_GREEN_TW  },  /* 1: star twinkles white, branches twinkle green  */
-    { &P_RGB_ROTATE,    &P_RGB_ROTATE   },  /* 2: everything steps red, green, blue, 1 s each  */
+    { &P_RGB_ROTATE,    &P_RGB_ROTATE   },  /* 1: all LEDs red, green, blue, 1 s each        */
+    { &P_STAR_WHITE,    &P_BR_GREEN_TW  },  /* 2: star twinkles white, branches twinkle green  */
     { &P_STAR_WHITE,    &P_BR_GREEN_RED },  /* 3: star white, branches twinkle green/red       */
     { &P_STAR_RAINBOW,  &P_BR_RAINBOW   },  /* 4: slow rainbow drift, star leads               */
     { &P_STAR_GOLD,     &P_BR_CANDLE    },  /* 5: gold star, candle-flame branches             */
     { &P_STAR_GOLD_STD, &P_BR_PARTY     },  /* 6: steady gold star, fast red/green/blue party  */
 };
 #define NUM_MODES   (1 + (uint8_t)(sizeof(MODES) / sizeof(MODES[0])))
-#define BOOT_MODE   1                       /* power up twinkling white star over green branches */
+#define BOOT_MODE   1                       /* power up in the red/green/blue cycle */
 
 /* -------------------------------------------------------------- shared state */
 static volatile uint8_t tick_flag;      /* set every 10 ms by TIM4 */

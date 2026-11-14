@@ -31,8 +31,8 @@ which debounces the switch.
 | Mode | Star | Branches |
 |------|------|----------|
 | 0 | Off | Off. Core in Halt, about 1 uA, wakes on button |
-| 1 | Twinkles white | Twinkles green |
-| 2 | Red, green, blue, 1 s each | Same, in step with the star |
+| 1 | Red, green, blue, 1 s each | Same, in step with the star |
+| 2 | Twinkles white | Twinkles green |
 | 3 | Twinkles white | Crossfades green and red |
 | 4 | Rainbow drift, leads | Rainbow drift, follows |
 | 5 | Gold twinkle | Candle-flame flicker |
@@ -123,6 +123,25 @@ while the LED firmware runs), then writes, verifies and starts the firmware. Ope
 not work for STM8 because there is no STM8 flash-bank driver; the Makefile uses `load_image` and
 `verify_image` instead.
 If you have `stm8flash` on your `PATH`, `mingw32-make flash-stm8flash` does the same job with that tool.
+
+## Hardware notes
+
+Findings from bringing up the first boards:
+
+- Each star colour pin drives one LED, but each branch colour pin (PB0, PB1, PB2) sinks the current of all
+  8 branch LEDs. An STM8 pin only holds a clean low level at a few mA, so the branch LEDs get a fraction of
+  the current the star gets and look dim, worst for red and blue. Firmware already drives them at 100% in
+  program 1, so the fix is hardware: a logic-level N-MOSFET per branch colour (pins would then be active
+  high, which needs a small firmware change), a resistor per LED, and for blue a supply above about 3.3 V.
+- Blue and green LEDs need about 2.8 to 3.2 V themselves, so at a 3.0 V supply they have almost no
+  headroom. Green also looks brighter than red or blue at the same duty because of LED efficiency and eye
+  sensitivity; the duty cycles are identical.
+- One board had a resistive bridge between the branch green and blue nets on the LED side of the series
+  resistors, which left blue dark and green dim. It shows up in a pin test: set port B to inputs with
+  pull-ups, drive one pin low, and see which other pins follow it.
+- The STM8L101 has no brown-out reset. Several boards showed an illegal-opcode reset flag (RST_SR bit 2)
+  right after being plugged in, and then ran cleanly. A slow or bouncing supply at plug-in is the likely
+  cause; good bulk capacitance on VDD near the MCU helps.
 
 ## Tuning notes
 
